@@ -1,1 +1,0 @@
-export '../user/competencias_page.dart' show HomeView;
