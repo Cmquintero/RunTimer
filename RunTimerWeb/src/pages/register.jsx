@@ -1,31 +1,104 @@
 import logo from "../assets/logo.svg";
+
 import { motion } from "framer-motion";
+
 import {
   Mail,
   Lock,
   Eye,
   EyeOff,
-  User
+  User,
 } from "lucide-react";
 
 import { useState } from "react";
 
+import { useNavigate } from "react-router-dom";
+
+import {
+  registerUser,
+  loginWithGoogle,
+} from "../services/authService";
+
 function Register() {
+
+  const navigate = useNavigate();
 
   const [showPassword, setShowPassword] = useState(false);
 
+  const [nombre, setNombre] = useState("");
+
+  const [email, setEmail] = useState("");
+
+  const [password, setPassword] = useState("");
+
+  const [loading, setLoading] = useState(false);
+
+  const handleRegister = async () => {
+
+    try {
+
+      setLoading(true);
+
+      await registerUser(
+        email,
+        password,
+        nombre
+      );
+
+
+      navigate("/");
+
+    } catch (error) {
+
+      console.error(error);
+
+      alert(error.message);
+
+    } finally {
+
+      setLoading(false);
+
+    }
+  };
+
+  const handleGoogle = async () => {
+
+    try {
+
+      setLoading(true);
+
+      await loginWithGoogle();
+
+
+
+      navigate("/");
+
+    } catch (error) {
+
+      console.error(error);
+
+      alert(error.message);
+
+    } finally {
+
+      setLoading(false);
+
+    }
+  };
+
   return (
 
-<motion.div
-  initial={{ x: "100%", opacity: 0 }}
-  animate={{ x: 0, opacity: 1 }}
-  exit={{ x: "-100%", opacity: 0 }}
-  transition={{
-    duration: 0.4,
-    ease: "easeInOut",
-  }}
-  className="min-h-screen bg-black flex items-center justify-center px-6"
->
+    <motion.div
+      initial={{ x: "100%", opacity: 0 }}
+      animate={{ x: 0, opacity: 1 }}
+      exit={{ x: "-100%", opacity: 0 }}
+      transition={{
+        duration: 0.4,
+        ease: "easeInOut",
+      }}
+      className="min-h-screen bg-black flex items-center justify-center px-6"
+    >
+
       <div className="w-full max-w-md">
 
         <div className="flex justify-center mb-6">
@@ -50,7 +123,6 @@ function Register() {
           Regístrate para continuar
         </p>
 
-
         <div className="relative mb-4">
 
           <User
@@ -61,6 +133,8 @@ function Register() {
           <input
             type="text"
             placeholder="Nombre completo"
+            value={nombre}
+            onChange={(e) => setNombre(e.target.value)}
             className="
               w-full
               pl-12
@@ -87,6 +161,8 @@ function Register() {
           <input
             type="email"
             placeholder="Correo"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
             className="
               w-full
               pl-12
@@ -112,9 +188,9 @@ function Register() {
 
           <input
             type={showPassword ? "text" : "password"}
-
             placeholder="Contraseña"
-
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
             className="
               w-full
               pl-12
@@ -153,6 +229,8 @@ function Register() {
         </div>
 
         <button
+          onClick={handleRegister}
+          disabled={loading}
           className="
             w-full
             bg-red-500
@@ -163,9 +241,16 @@ function Register() {
             text-white
             font-bold
             mb-8
+            disabled:opacity-50
           "
         >
-          Registrarse
+
+          {
+            loading
+              ? "Cargando..."
+              : "Registrarse"
+          }
+
         </button>
 
         <div className="flex items-center mb-8">
@@ -181,6 +266,8 @@ function Register() {
         </div>
 
         <button
+          onClick={handleGoogle}
+          disabled={loading}
           className="
             w-full
             flex
@@ -194,6 +281,7 @@ function Register() {
             py-4
             text-black
             font-semibold
+            disabled:opacity-50
           "
         >
 
