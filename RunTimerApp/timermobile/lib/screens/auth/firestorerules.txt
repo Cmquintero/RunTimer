@@ -1,0 +1,373 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ══════════════════════════════════════════════════════
+    //  HELPERS DE AUTENTICACIÓN
+    // ══════════════════════════════════════════════════════
+
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function isOwner(ownerId) {
+      return isAuth() && uid() == ownerId;
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  HELPERS DE ROL  (cached get → 1 lectura por request)
+    // ══════════════════════════════════════════════════════
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(uid()));
+    }
+
+    function userExists() {
+      return isAuth() && exists(/databases/$(database)/documents/users/$(uid()));
+    }
+
+    function getRole() {
+      return userExists() ? userDoc().data.role : null;
+    }
+
+    function isAdmin() {
+      return isAuth() && getRole() == 'admin';
+    }
+
+    function isJudge() {
+      return isAuth() && getRole() == 'judge';
+    }
+
+    function isAdminOrJudge() {
+      return isAdmin() || isJudge();
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  HELPERS DE ROBOT
+    // ══════════════════════════════════════════════════════
+
+    function getRobot(robotId) {
+      return get(/databases/$(database)/documents/robots/$(robotId));
+    }
+
+    function robotExists(robotId) {
+      return exists(/databases/$(database)/documents/robots/$(robotId));
+    }
+
+    function robotBelongsToMe(robotId) {
+      return robotExists(robotId)
+          && getRobot(robotId).data.captainUid == uid();
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  VALIDADORES DE DOMINIO
+    // ══════════════════════════════════════════════════════
+
+    // ✅ FIX: separados correctamente — antes se usaba
+    // validTipoCompetencia para validar category de robots,
+    // lo que bloqueaba silenciosamente todos los creates.
+
+    function validCategoriaRobot(cat) {
+      return cat in ['Novato', 'Intermedio', 'Avanzado', 'Experto'];
+    }
+
+    function validTipoRobot(tipo) {
+      return tipo in [
+        'Seguidor de línea', 'Laberinto', 'Sumo',
+        'Velocidad', 'Obstáculos', 'Libre'
+      ];
+    }
+
+    function validCategoriaCompetencia(cat) {
+      return cat in [
+        'Seguidor de línea', 'Laberinto', 'Sumo',
+        'Velocidad', 'Obstáculos', 'Libre'
+      ];
+    }
+
+    function validStatusCompetencia(s) {
+      return s in ['active', 'closed', 'finished'];
+    }
+
+    function validStatusCarrera(s) {
+      return s in ['completed', 'dns', 'dnf', 'dq'];
+    }
+
+    function validAccionPista(a) {
+      return a in ['llamado', 'completado', 'dns', 'dnf', 'dq'];
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  COLECCIÓN: users/{uid}
+    // ══════════════════════════════════════════════════════
+
+    match /users/{userId} {
+
+      allow read:
+        if isOwner(userId) || isAdmin();
+
+      allow create:
+        if isOwner(userId)
+        && request.resource.data.keys().hasOnly([
+             'uid', 'email', 'nombre', 'role',
+             'fcmToken', 'photoUrl', 'creadoEn'
+           ])
+        && request.resource.data.uid       == userId
+        && request.resource.data.email     is string
+        && request.resource.data.nombre    is string
+        && request.resource.data.role      in ['user', 'captain']
+        && request.resource.data.fcmToken  is string
+        && request.resource.data.photoUrl  is string
+        && request.resource.data.creadoEn  is timestamp;
+
+      allow update:
+        if isAdmin()
+        || (
+          isOwner(userId)
+          && request.resource.data.keys().hasOnly([
+               'uid', 'email', 'nombre', 'role',
+               'fcmToken', 'photoUrl', 'creadoEn'
+             ])
+          // Campos inmutables
+          && request.resource.data.uid      == resource.data.uid
+          && request.resource.data.email    == resource.data.email
+          && request.resource.data.creadoEn == resource.data.creadoEn
+          // Solo puede subir de 'user' → 'captain', nunca bajar ni saltar
+          && (
+            request.resource.data.role == resource.data.role
+            || (
+              resource.data.role             == 'user'
+              && request.resource.data.role  == 'captain'
+            )
+          )
+        );
+
+      allow delete:
+        if isAdmin();
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  COLECCIÓN: robots/{robotId}
+    // ══════════════════════════════════════════════════════
+
+    match /robots/{robotId} {
+
+      allow read:
+        if isAuth();
+
+      // ✅ FIX PRINCIPAL: category ahora usa validCategoriaRobot
+      // ('Novato'|'Intermedio'|'Avanzado'|'Experto') en lugar de
+      // validTipoCompetencia, que es lo que causaba el rechazo silencioso.
+      allow create:
+        if isAuth()
+        && (
+          isAdmin()
+          || request.resource.data.captainUid == uid()
+        )
+        && request.resource.data.keys().hasOnly([
+             'name', 'category', 'tipoRobot', 'captainUid',
+             'description', 'photoUrl', 'compIdActual',
+             'historial', 'createdAt'
+           ])
+        && request.resource.data.name         is string
+        && request.resource.data.name.size()  >  0
+        && request.resource.data.name.size()  <= 60
+        && validCategoriaRobot(request.resource.data.category)   // ✅ FIX
+        && validTipoRobot(request.resource.data.tipoRobot)
+        && request.resource.data.captainUid   is string
+        && request.resource.data.captainUid.size() > 0
+        && request.resource.data.description  is string
+        && request.resource.data.photoUrl     is string
+        && request.resource.data.compIdActual is string
+        && request.resource.data.historial    is list
+        && request.resource.data.createdAt    is timestamp;
+
+      allow update:
+        if isAdmin()
+        || (
+          isAuth()
+          && resource.data.captainUid          == uid()
+          && request.resource.data.captainUid  == resource.data.captainUid
+          && request.resource.data.createdAt   == resource.data.createdAt
+          && request.resource.data.keys().hasOnly([
+               'name', 'category', 'tipoRobot', 'captainUid',
+               'description', 'photoUrl', 'compIdActual',
+               'historial', 'createdAt'
+             ])
+        );
+
+      allow delete:
+        if isAdmin()
+        || (isAuth() && resource.data.captainUid == uid());
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  COLECCIÓN: competitions/{compId}
+    // ══════════════════════════════════════════════════════
+
+    match /competitions/{compId} {
+
+      allow read:
+        if isAuth();
+
+      allow create:
+        if isAdmin()
+        && request.resource.data.keys().hasOnly([
+             'name', 'location', 'description', 'category',
+             'totalRounds', 'status', 'createdByUid', 'judgeUid',
+             'date', 'reminder7days', 'reminder1day',
+             'reminder7daysSent', 'reminder1daySent'
+           ])
+        && request.resource.data.name          is string
+        && request.resource.data.name.size()   >  0
+        && request.resource.data.location      is string
+        && request.resource.data.description   is string
+        && validCategoriaCompetencia(request.resource.data.category)
+        && request.resource.data.totalRounds   is int
+        && request.resource.data.totalRounds   >  0
+        && request.resource.data.totalRounds   <= 20
+        && validStatusCompetencia(request.resource.data.status)
+        && request.resource.data.createdByUid  is string
+        && request.resource.data.judgeUid      is string
+        && request.resource.data.date          is timestamp
+        && request.resource.data.reminder7days is timestamp
+        && request.resource.data.reminder1day  is timestamp
+        && request.resource.data.reminder7daysSent is bool
+        && request.resource.data.reminder1daySent  is bool;
+
+      allow update:
+        if isAdmin()
+        && request.resource.data.keys().hasOnly([
+             'name', 'location', 'description', 'category',
+             'totalRounds', 'status', 'createdByUid', 'judgeUid',
+             'date', 'reminder7days', 'reminder1day',
+             'reminder7daysSent', 'reminder1daySent'
+           ])
+        && (
+          !('category' in request.resource.data)
+          || validCategoriaCompetencia(request.resource.data.category)
+        )
+        && (
+          !('status' in request.resource.data)
+          || validStatusCompetencia(request.resource.data.status)
+        );
+
+      allow delete:
+        if isAdmin();
+
+      // ── Subcolección: enrollments/{robotId} ────────────
+
+      match /enrollments/{enrollId} {
+
+        allow read:
+          if isAuth();
+
+        allow create:
+          if isAuth()
+          && request.resource.data.keys().hasOnly([
+               'robotId', 'captainUid', 'enrolledAt',
+               'confirmed', 'participantNumber'
+             ])
+          && request.resource.data.robotId          == enrollId
+          && request.resource.data.enrolledAt       is timestamp
+          && request.resource.data.confirmed        is bool
+          && request.resource.data.participantNumber is int
+          && (
+            isAdmin()
+            || (
+              request.resource.data.captainUid == uid()
+              && robotBelongsToMe(enrollId)
+            )
+          );
+
+        allow update, delete:
+          if isAdmin();
+      }
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  COLECCIÓN: race_times/{timeId}
+    // ══════════════════════════════════════════════════════
+
+    match /race_times/{timeId} {
+
+      allow read:
+        if isAuth();
+
+      allow create:
+        if isAdminOrJudge()
+        && request.resource.data.keys().hasOnly([
+             'robotId', 'compId', 'category', 'round',
+             'timeMs', 'penaltyMs', 'finalTimeMs',
+             'registeredByUid', 'status', 'bestLap', 'registeredAt'
+           ])
+        && request.resource.data.robotId          is string
+        && request.resource.data.robotId.size()   >  0
+        && request.resource.data.compId           is string
+        && request.resource.data.compId.size()    >  0
+        && validCategoriaCompetencia(request.resource.data.category)
+        && request.resource.data.round            is int
+        && request.resource.data.round            >  0
+        && request.resource.data.timeMs           is int
+        && request.resource.data.timeMs           >= 0
+        && request.resource.data.penaltyMs        is int
+        && request.resource.data.penaltyMs        >= 0
+        && request.resource.data.finalTimeMs      is int
+        && request.resource.data.finalTimeMs      >= 0
+        && request.resource.data.registeredByUid  == uid()
+        && validStatusCarrera(request.resource.data.status)
+        && request.resource.data.bestLap          is bool
+        && request.resource.data.registeredAt     is timestamp;
+
+      allow update, delete:
+        if isAdmin();
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  COLECCIÓN: carrera_activa/{docId}
+    // ══════════════════════════════════════════════════════
+
+    match /carrera_activa/{docId} {
+
+      allow read:
+        if isAuth();
+
+      allow create, update:
+        if isAdminOrJudge();
+
+      allow delete:
+        if isAdmin();
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  COLECCIÓN: pista_log/{logId}
+    // ══════════════════════════════════════════════════════
+
+    match /pista_log/{logId} {
+
+      allow read:
+        if isAdminOrJudge();
+
+      allow create:
+        if isAdminOrJudge()
+        && request.resource.data.keys().hasOnly([
+             'compId', 'robotId', 'accion', 'juezUid', 'timestamp'
+           ])
+        && request.resource.data.compId    is string
+        && request.resource.data.robotId   is string
+        && validAccionPista(request.resource.data.accion)
+        && request.resource.data.juezUid   == uid()
+        && request.resource.data.timestamp is timestamp;
+
+      // Logs son inmutables — auditoría
+      allow update, delete:
+        if false;
+    }
+
+  }
+}
