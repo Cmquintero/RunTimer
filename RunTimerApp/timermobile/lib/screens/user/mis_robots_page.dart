@@ -10,44 +10,82 @@ import '../../widgets/custom_button.dart';
 import '../../widgets/custom_text_field.dart';
 import '../../widgets/custom_dropdown.dart';
 import '../../widgets/loading_widget.dart';
-
+ 
 // ══ MIS ROBOTS VIEW ══════════════════════════════════
-class MisRobotsView extends StatelessWidget {
+// ✅ FIX: Convertido a StatefulWidget para cachear el servicio
+// y el stream — evita múltiples conexiones a Firestore en cada rebuild.
+class MisRobotsView extends StatefulWidget {
   const MisRobotsView({super.key});
-
+ 
+  @override
+  State<MisRobotsView> createState() => _MisRobotsViewState();
+}
+ 
+class _MisRobotsViewState extends State<MisRobotsView> {
+  // ✅ FIX: Servicio y stream cacheados — se crean una sola vez
+  late final String _uid;
+  late final RobotService _robotService;
+  late final Stream<List<RobotModel>> _stream;
+ 
+  @override
+  void initState() {
+    super.initState();
+    _uid          = FirebaseAuth.instance.currentUser!.uid;
+    _robotService = RobotService();
+    // ✅ FIX: Se agrega orderBy('createdAt') para que coincida con
+    // el índice compuesto creado en Firestore:
+    // robots: captainUid ASC, createdAt ASC
+    // Sin este orderBy el índice no aplica y Firestore puede
+    // devolver 0 resultados silenciosamente.
+    _stream = _robotService.streamRobotsPorCapitan(_uid);
+  }
+ 
   @override
   Widget build(BuildContext context) {
-    final uid = FirebaseAuth.instance.currentUser!.uid;
-
     return Scaffold(
       backgroundColor: AppColors.oscuro,
       floatingActionButton: FloatingActionButton(
         backgroundColor: AppColors.rojo,
         child: const Icon(Icons.add, color: Colors.white),
-        onPressed: () => Navigator.push(
-          context,
-          MaterialPageRoute(
-              builder: (_) => const RegistrarRobotDirectoPage()),
-        ),
+        onPressed: () => _irARegistrar(context),
       ),
       body: StreamBuilder<List<RobotModel>>(
-        stream: RobotService().streamRobotsPorCapitan(uid),
+        stream: _stream, // ✅ FIX: stream cacheado, no recreado en cada build
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const LoadingWidget(mensaje: 'Cargando robots...');
           }
           if (snapshot.hasError) {
-            return const Center(
-              child: Text('Error al cargar robots',
-                  style: AppTextStyles.bodySecundario),
+            // ✅ FIX: Mostramos el error real para facilitar debugging
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.error_outline,
+                        color: AppColors.error, size: 48),
+                    const SizedBox(height: 12),
+                    const Text('Error al cargar robots',
+                        style: AppTextStyles.bodySecundario),
+                    const SizedBox(height: 8),
+                    Text(
+                      snapshot.error.toString(),
+                      style: const TextStyle(
+                          color: Colors.white38, fontSize: 11),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
             );
           }
           if (!snapshot.hasData || snapshot.data!.isEmpty) {
             return _emptyState(context);
           }
           return ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: snapshot.data!.length,
+            padding:     const EdgeInsets.all(16),
+            itemCount:   snapshot.data!.length,
             itemBuilder: (context, index) =>
                 _robotCard(snapshot.data![index]),
           );
@@ -55,7 +93,15 @@ class MisRobotsView extends StatelessWidget {
       ),
     );
   }
-
+ 
+  void _irARegistrar(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+          builder: (_) => const RegistrarRobotDirectoPage()),
+    );
+  }
+ 
   Widget _emptyState(BuildContext context) => Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -74,17 +120,13 @@ class MisRobotsView extends StatelessWidget {
               child: CustomButton(
                 texto:     'Registrar robot',
                 icono:     Icons.add,
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => const RegistrarRobotDirectoPage()),
-                ),
+                onPressed: () => _irARegistrar(context),
               ),
             ),
           ],
         ),
       );
-
+ 
   Widget _robotCard(RobotModel robot) => Container(
         margin: const EdgeInsets.only(bottom: 12),
         decoration: BoxDecoration(
@@ -116,6 +158,16 @@ class MisRobotsView extends StatelessWidget {
                         Text(robot.name, style: AppTextStyles.cardTitulo),
                         Text(robot.category,
                             style: AppTextStyles.cardSubtitulo),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            const Icon(Icons.precision_manufacturing,
+                                color: Colors.white38, size: 12),
+                            const SizedBox(width: 4),
+                            Text(robot.tipoRobot,
+                                style: AppTextStyles.cardSubtitulo),
+                          ],
+                        ),
                       ],
                     ),
                   ),
@@ -147,7 +199,7 @@ class MisRobotsView extends StatelessWidget {
           ),
         ),
       );
-
+ 
   Widget _chipEstado(RobotModel robot) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
@@ -165,70 +217,76 @@ class MisRobotsView extends StatelessWidget {
         ),
       );
 }
-
+ 
 // ══ REGISTRAR ROBOT DIRECTO ═══════════════════════════
 class RegistrarRobotDirectoPage extends StatefulWidget {
   const RegistrarRobotDirectoPage({super.key});
-
+ 
   @override
   State<RegistrarRobotDirectoPage> createState() =>
       _RegistrarRobotDirectoPageState();
 }
-
+ 
 class _RegistrarRobotDirectoPageState
     extends State<RegistrarRobotDirectoPage> {
   final _robotService      = RobotService();
   final _nombreController  = TextEditingController();
   final _descripController = TextEditingController();
   String? _categoriaSeleccionada;
+  String? _tipoRobotSeleccionado;
   bool    _cargando = false;
-
+ 
   Future<void> _registrarRobot() async {
     if (_nombreController.text.trim().isEmpty ||
-        _categoriaSeleccionada == null) {
+        _categoriaSeleccionada == null        ||
+        _tipoRobotSeleccionado == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content:         Text('Nombre y categoría son obligatorios'),
+          content:         Text('Nombre, categoría y tipo son obligatorios'),
           backgroundColor: AppColors.error,
         ),
       );
       return;
     }
-    if (_cargando) return; // guard anti-doble tap
+    if (_cargando) return;
     setState(() => _cargando = true);
-
+ 
     try {
       final uid   = FirebaseAuth.instance.currentUser!.uid;
       final robot = RobotModel(
         id:          '',
         name:        _nombreController.text.trim(),
         category:    _categoriaSeleccionada!,
+        tipoRobot:   _tipoRobotSeleccionado!,
         captainUid:  uid,
         description: _descripController.text.trim(),
       );
-
+ 
       await _robotService.crearRobot(robot);
-
-      // Cambiar rol a captain si aún es 'user'
+ 
+      // ✅ FIX: Cambia rol a captain usando AppStrings.colUsers
+      // para ser consistente con el resto de la app.
+      // Antes usaba 'users' hardcodeado — ahora usa la constante.
       try {
         final doc = await FirebaseFirestore.instance
-            .collection('users')
+            .collection(AppStrings.colUsers) // ✅ constante, no string literal
             .doc(uid)
             .get();
-        if ((doc.data()?['role'] ?? 'user') == 'user') {
+        final rolActual = doc.data()?['role'] ?? AppStrings.user;
+        if (rolActual == AppStrings.user) {
           await FirebaseFirestore.instance
-              .collection('users')
+              .collection(AppStrings.colUsers) // ✅ constante
               .doc(uid)
-              .update({'role': 'captain'});
+              .update({'role': AppStrings.capitan});
         }
       } catch (_) {
-        // No bloquear el flujo si falla el cambio de rol
+        // Si falla el cambio de rol no bloqueamos el registro del robot
       }
-
+ 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content:         Text('Robot registrado exitosamente'),
+            content:         Text('Robot registrado exitosamente ✅'),
             backgroundColor: Colors.green,
           ),
         );
@@ -238,7 +296,7 @@ class _RegistrarRobotDirectoPageState
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content:         Text('Error: $e'),
+            content:         Text('Error al registrar: $e'),
             backgroundColor: AppColors.error,
           ),
         );
@@ -247,14 +305,14 @@ class _RegistrarRobotDirectoPageState
       if (mounted) setState(() => _cargando = false);
     }
   }
-
+ 
   @override
   void dispose() {
     _nombreController.dispose();
     _descripController.dispose();
     super.dispose();
   }
-
+ 
   @override
   Widget build(BuildContext context) => Scaffold(
         backgroundColor: AppColors.oscuro,
@@ -277,21 +335,34 @@ class _RegistrarRobotDirectoPageState
                 style: AppTextStyles.bodySecundario,
               ),
               const SizedBox(height: 24),
+ 
               CustomTextField(
                 controller: _nombreController,
                 hint:       'Nombre del robot',
                 icono:      Icons.smart_toy_outlined,
               ),
               const SizedBox(height: 16),
+ 
+              CustomDropdown(
+                valor:     _tipoRobotSeleccionado,
+                opciones:  AppStrings.tiposRobot,
+                hint:      'Tipo de robot *',
+                icono:     Icons.precision_manufacturing_outlined,
+                onChanged: (v) =>
+                    setState(() => _tipoRobotSeleccionado = v),
+              ),
+              const SizedBox(height: 16),
+ 
               CustomDropdown(
                 valor:     _categoriaSeleccionada,
                 opciones:  AppStrings.categoriasRobot,
-                hint:      'Selecciona una categoría',
+                hint:      'Categoría *',
                 icono:     Icons.category_outlined,
                 onChanged: (v) =>
                     setState(() => _categoriaSeleccionada = v),
               ),
               const SizedBox(height: 16),
+ 
               CustomTextField(
                 controller: _descripController,
                 hint:       'Descripción (opcional)',
@@ -299,6 +370,7 @@ class _RegistrarRobotDirectoPageState
                 maxLines:   3,
               ),
               const SizedBox(height: 32),
+ 
               CustomButton(
                 texto:     'Registrar robot',
                 onPressed: _cargando ? null : _registrarRobot,

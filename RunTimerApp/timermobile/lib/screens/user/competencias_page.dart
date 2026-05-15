@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../services/competition_service.dart';
 import '../../services/robot_service.dart';
 import '../../models/competition_model.dart';
@@ -13,11 +14,11 @@ import '../../widgets/custom_text_field.dart';
 import '../../widgets/custom_dropdown.dart';
 import '../../widgets/loading_widget.dart';
 import '../../widgets/error_widget.dart';
-
+ 
 // ══ HOME VIEW ════════════════════════════════════════
 class HomeView extends StatelessWidget {
   const HomeView({super.key});
-
+ 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -73,28 +74,30 @@ class HomeView extends StatelessWidget {
     );
   }
 }
-
+ 
 // ══ DETALLE COMPETENCIA ══════════════════════════════
 class DetalleCompetenciaPage extends StatefulWidget {
   final CompetitionModel competencia;
   const DetalleCompetenciaPage({super.key, required this.competencia});
-
+ 
   @override
   State<DetalleCompetenciaPage> createState() =>
       _DetalleCompetenciaPageState();
 }
-
+ 
 class _DetalleCompetenciaPageState extends State<DetalleCompetenciaPage> {
-  final Map<String, bool> _cargandoPorRobot = {};
+  final Map<String, bool> _cargandoPorRobot   = {};
+  // null = aún verificando, true = disponible, false = ocupado ese día
+  final Map<String, bool?> _disponibilidadRobot = {};
   bool _verificandoInscripcion = true;
   bool _yaInscrito             = false;
-
+ 
   @override
   void initState() {
     super.initState();
     _verificarInscripcion();
   }
-
+ 
   Future<void> _verificarInscripcion() async {
     final uid = FirebaseAuth.instance.currentUser!.uid;
     final yaInscrito = await RobotService().usuarioYaInscritoEn(
@@ -108,40 +111,76 @@ class _DetalleCompetenciaPageState extends State<DetalleCompetenciaPage> {
       });
     }
   }
-
+ 
+  /// Verifica disponibilidad de un robot considerando la fecha de la competencia.
+  Future<bool> _robotEstaDisponible(RobotModel robot) async {
+    // Si el campo local está vacío, está libre
+    if (robot.compIdActual.isEmpty) return true;
+ 
+    // Verificar conflicto de fecha en servidor
+    final conflicto = await RobotService().robotTieneConflictoDeFecha(
+      robotId:          robot.id,
+      fechaCompetencia: widget.competencia.date,
+    );
+    return !conflicto;
+  }
+ 
+  Future<void> _cargarDisponibilidad(List<RobotModel> robots) async {
+    for (final robot in robots) {
+      if (_disponibilidadRobot.containsKey(robot.id)) continue;
+      final disponible = await _robotEstaDisponible(robot);
+      if (mounted) {
+        setState(() => _disponibilidadRobot[robot.id] = disponible);
+      }
+    }
+  }
+ 
   Future<void> _inscribirRobot(RobotModel robot) async {
     if (_cargandoPorRobot[robot.id] == true) return;
-
+ 
     // Validar inscripción abierta
     if (!widget.competencia.inscripcionAbierta) {
       mostrarSnackError(context,
           'Las inscripciones para esta competencia están cerradas');
       return;
     }
-
-    // Validar 1 robot por usuario
+ 
+    // Validar 1 robot por usuario en esta competencia
     if (_yaInscrito) {
       mostrarSnackError(context,
           'Ya tienes un robot inscrito en esta competencia');
       return;
     }
-
+ 
+    // Validar que el robot no tenga otra competencia el mismo día
+    final disponible = await _robotEstaDisponible(robot);
+    if (!disponible) {
+      if (mounted) {
+        mostrarSnackError(context,
+            'Este robot ya está inscrito en otra competencia el mismo día');
+        setState(() => _disponibilidadRobot[robot.id] = false);
+      }
+      return;
+    }
+ 
     setState(() => _cargandoPorRobot[robot.id] = true);
-
+ 
     final uid = FirebaseAuth.instance.currentUser!.uid;
     try {
       // Doble verificación en servidor
       final yaInscrito = await RobotService().usuarioYaInscritoEn(
-        compId:     widget.competencia.id,
-        captainUid: uid,
-      );
-      if (yaInscrito) {
-        mostrarSnackError(context,
-            'Ya tienes un robot inscrito en esta competencia');
-        setState(() => _cargandoPorRobot[robot.id] = false);
-        return;
-      }
-
+  compId:     widget.competencia.id,
+  captainUid: uid,
+);
+if (yaInscrito) {
+  if (mounted) {
+    mostrarSnackError(context,
+        'Ya tienes un robot inscrito en esta competencia');
+    setState(() => _cargandoPorRobot[robot.id] = false);
+  }
+  return;
+}
+ 
       await RobotService().inscribirRobot(
         compId:     widget.competencia.id,
         robotId:    robot.id,
@@ -151,7 +190,7 @@ class _DetalleCompetenciaPageState extends State<DetalleCompetenciaPage> {
         'compIdActual': widget.competencia.id,
         'historial':    [...robot.historial, widget.competencia.id],
       });
-
+ 
       if (mounted) {
         mostrarSnackExito(context, 'Robot inscrito exitosamente');
         Navigator.pop(context);
@@ -163,12 +202,12 @@ class _DetalleCompetenciaPageState extends State<DetalleCompetenciaPage> {
       }
     }
   }
-
+ 
   @override
   Widget build(BuildContext context) {
     final uid  = FirebaseAuth.instance.currentUser!.uid;
     final comp = widget.competencia;
-
+ 
     return Scaffold(
       backgroundColor: AppColors.oscuro,
       appBar: AppBar(
@@ -183,11 +222,11 @@ class _DetalleCompetenciaPageState extends State<DetalleCompetenciaPage> {
           children: [
             _infoCard(comp),
             const SizedBox(height: 16),
-
+ 
             // ── Banner estado inscripción ──
             _bannerInscripcion(comp),
             const SizedBox(height: 24),
-
+ 
             // ── Sección robots ──
             if (comp.inscripcionAbierta && !_yaInscrito) ...[
               const Text('Inscribir robot',
@@ -206,6 +245,58 @@ class _DetalleCompetenciaPageState extends State<DetalleCompetenciaPage> {
                     if (!snapshot.hasData || snapshot.data!.isEmpty) {
                       return _sinRobots(context);
                     }
+ 
+                    // Filtrar solo robots del mismo tipo que la competencia
+                    final robotsFiltrados = snapshot.data!
+                        .where((r) => r.tipoRobot == comp.category)
+                        .toList();
+ 
+                    if (robotsFiltrados.isEmpty) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width:   double.infinity,
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color:        AppColors.oscuro2,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.orange.withValues(alpha: 0.5)),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.warning_amber_rounded,
+                                    color: Colors.orange, size: 20),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    'No tienes robots de tipo "${comp.category}" registrados. '
+                                    'Registra uno para participar en esta competencia.',
+                                    style: const TextStyle(
+                                        color: Colors.orange, fontSize: 13),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          OutlinedButton.icon(
+                            onPressed: () => _irARegistrar(context),
+                            style: OutlinedButton.styleFrom(
+                              side:  const BorderSide(color: AppColors.rojo),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12)),
+                            ),
+                            icon:  const Icon(Icons.add, color: AppColors.rojo),
+                            label: const Text('Registrar robot nuevo',
+                                style: TextStyle(color: AppColors.rojo)),
+                          ),
+                        ],
+                      );
+                    }
+ 
+                    // Lanzar verificación de disponibilidad en paralelo
+                    _cargarDisponibilidad(robotsFiltrados);
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -214,7 +305,7 @@ class _DetalleCompetenciaPageState extends State<DetalleCompetenciaPage> {
                           style: AppTextStyles.bodySecundario,
                         ),
                         const SizedBox(height: 12),
-                        ...snapshot.data!.map(_robotCard),
+                        ...robotsFiltrados.map(_robotCard),
                         const SizedBox(height: 16),
                         OutlinedButton.icon(
                           onPressed: () => _irARegistrar(context),
@@ -259,12 +350,12 @@ class _DetalleCompetenciaPageState extends State<DetalleCompetenciaPage> {
       ),
     );
   }
-
+ 
   Widget _bannerInscripcion(CompetitionModel comp) {
     Color    color;
     IconData icono;
     String   texto;
-
+ 
     if (comp.esFinalizada) {
       color = Colors.white24;
       icono = Icons.flag;
@@ -282,7 +373,7 @@ class _DetalleCompetenciaPageState extends State<DetalleCompetenciaPage> {
       icono = Icons.lock_open;
       texto = 'Inscripciones abiertas — cierran en ${comp.diasRestantes - 10} días';
     }
-
+ 
     return Container(
       width:   double.infinity,
       padding: const EdgeInsets.all(14),
@@ -306,7 +397,7 @@ class _DetalleCompetenciaPageState extends State<DetalleCompetenciaPage> {
       ),
     );
   }
-
+ 
   Widget _sinRobots(BuildContext context) => Column(
         children: [
           Container(
@@ -330,7 +421,7 @@ class _DetalleCompetenciaPageState extends State<DetalleCompetenciaPage> {
           ),
         ],
       );
-
+ 
   void _irARegistrar(BuildContext context) => Navigator.push(
         context,
         MaterialPageRoute(
@@ -338,11 +429,14 @@ class _DetalleCompetenciaPageState extends State<DetalleCompetenciaPage> {
               competenciaId: widget.competencia.id),
         ),
       );
-
+ 
   Widget _robotCard(RobotModel robot) {
-    final disponible = robot.estaDisponible;
-    final cargando   = _cargandoPorRobot[robot.id] == true;
-
+    // null = verificando, true = disponible, false = ocupado ese día
+    final disponibilidad = _disponibilidadRobot[robot.id];
+    final verificando    = disponibilidad == null;
+    final disponible     = disponibilidad == true;
+    final cargando       = _cargandoPorRobot[robot.id] == true;
+ 
     return Container(
       margin:  const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(16),
@@ -365,15 +459,21 @@ class _DetalleCompetenciaPageState extends State<DetalleCompetenciaPage> {
                 Text(robot.name, style: AppTextStyles.cardTitulo),
                 Text(robot.category,
                     style: AppTextStyles.cardSubtitulo),
-                if (!disponible)
+                if (!verificando && !disponible)
                   const Text(
-                    'Ya inscrito en otra competencia',
+                    'Ya inscrito en otra competencia este día',
                     style: TextStyle(color: Colors.orange, fontSize: 11),
                   ),
               ],
             ),
           ),
-          if (disponible)
+          if (verificando)
+            const SizedBox(
+              width: 20, height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2,
+                  color: Colors.white38),
+            )
+          else if (disponible)
             SizedBox(
               height: 36,
               child: ElevatedButton(
@@ -409,7 +509,7 @@ class _DetalleCompetenciaPageState extends State<DetalleCompetenciaPage> {
       ),
     );
   }
-
+ 
   Widget _infoCard(CompetitionModel c) => Container(
         width:   double.infinity,
         padding: const EdgeInsets.all(20),
@@ -444,7 +544,7 @@ class _DetalleCompetenciaPageState extends State<DetalleCompetenciaPage> {
           ],
         ),
       );
-
+ 
   Widget _fila(IconData icono, String texto) => Row(
         children: [
           Icon(icono, color: AppColors.rojo, size: 16),
@@ -453,34 +553,36 @@ class _DetalleCompetenciaPageState extends State<DetalleCompetenciaPage> {
         ],
       );
 }
-
+ 
 // ══ REGISTRAR ROBOT PAGE ═════════════════════════════
 class RegistrarRobotPage extends StatefulWidget {
   final String competenciaId;
   const RegistrarRobotPage({super.key, required this.competenciaId});
-
+ 
   @override
   State<RegistrarRobotPage> createState() => _RegistrarRobotPageState();
 }
-
+ 
 class _RegistrarRobotPageState extends State<RegistrarRobotPage> {
   final _robotService      = RobotService();
   final _nombreController  = TextEditingController();
   final _descripController = TextEditingController();
   String? _categoriaSeleccionada;
+  String? _tipoRobotSeleccionado;
   bool    _cargando = false;
-
+ 
   Future<void> _registrarRobot() async {
     if (_nombreController.text.trim().isEmpty ||
-        _categoriaSeleccionada == null) {
-      mostrarSnackError(context, 'Nombre y categoría son obligatorios');
+        _categoriaSeleccionada == null ||
+        _tipoRobotSeleccionado == null) {
+      mostrarSnackError(context, 'Nombre, categoría y tipo son obligatorios');
       return;
     }
     if (_cargando) return;
     setState(() => _cargando = true);
-
+ 
     final uid = FirebaseAuth.instance.currentUser!.uid;
-
+ 
     // Verificar que el usuario no tenga ya un robot inscrito
     final yaInscrito = await _robotService.usuarioYaInscritoEn(
       compId:     widget.competenciaId,
@@ -494,25 +596,45 @@ class _RegistrarRobotPageState extends State<RegistrarRobotPage> {
       }
       return;
     }
-
+ 
     try {
       final robot = RobotModel(
         id:           '',
         name:         _nombreController.text.trim(),
         category:     _categoriaSeleccionada!,
+        tipoRobot:    _tipoRobotSeleccionado!,
         captainUid:   uid,
         description:  _descripController.text.trim(),
         compIdActual: widget.competenciaId,
         historial:    [widget.competenciaId],
       );
-
+ 
       final robotId = await _robotService.crearRobotConId(robot);
+ 
+      // Promover a captain si aún es 'user' — necesario para que
+      // Firestore Rules permita el enrollment
+      try {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .get();
+        if ((doc.data()?['role'] ?? 'user') == 'user') {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(uid)
+              .update({'role': 'captain'});
+        }
+      } catch (_) {}
+ 
+      // Pequeña espera para que Firestore propague el robot recién creado
+      await Future.delayed(const Duration(milliseconds: 500));
+ 
       await _robotService.inscribirRobot(
         compId:     widget.competenciaId,
         robotId:    robotId,
         captainUid: uid,
       );
-
+ 
       if (mounted) {
         mostrarSnackExito(context,
             'Robot registrado e inscrito exitosamente');
@@ -527,14 +649,14 @@ class _RegistrarRobotPageState extends State<RegistrarRobotPage> {
       if (mounted) setState(() => _cargando = false);
     }
   }
-
+ 
   @override
   void dispose() {
     _nombreController.dispose();
     _descripController.dispose();
     super.dispose();
   }
-
+ 
   @override
   Widget build(BuildContext context) => Scaffold(
         backgroundColor: AppColors.oscuro,
@@ -572,6 +694,15 @@ class _RegistrarRobotPageState extends State<RegistrarRobotPage> {
                     setState(() => _categoriaSeleccionada = v),
               ),
               const SizedBox(height: 16),
+              CustomDropdown(
+                valor:     _tipoRobotSeleccionado,
+                opciones:  AppStrings.tiposRobot,
+                hint:      'Tipo de robot',
+                icono:     Icons.smart_toy_outlined,
+                onChanged: (v) =>
+                    setState(() => _tipoRobotSeleccionado = v),
+              ),
+              const SizedBox(height: 16),
               CustomTextField(
                 controller: _descripController,
                 hint:       'Descripción (opcional)',
@@ -590,3 +721,4 @@ class _RegistrarRobotPageState extends State<RegistrarRobotPage> {
         ),
       );
 }
+ 

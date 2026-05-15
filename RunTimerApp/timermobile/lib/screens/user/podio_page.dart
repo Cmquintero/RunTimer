@@ -8,19 +8,19 @@ import '../../models/competition_model.dart';
 import '../../constants/app_colors.dart';
 import '../../constants/app_text_styles.dart';
 import '../../widgets/loading_widget.dart';
-
+ 
 class PodioView extends StatefulWidget {
   const PodioView({super.key});
-
+ 
   @override
   State<PodioView> createState() => _PodioViewState();
 }
-
+ 
 class _PodioViewState extends State<PodioView> {
   final _raceService        = RaceService();
   final _competitionService = CompetitionService();
   String? _compIdSeleccionada;
-
+ 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -31,7 +31,7 @@ class _PodioViewState extends State<PodioView> {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const LoadingWidget(mensaje: 'Cargando competencias...');
           }
-
+ 
           if (!snapshot.hasData || snapshot.data!.isEmpty) {
             return const Center(
               child: Column(
@@ -46,10 +46,10 @@ class _PodioViewState extends State<PodioView> {
               ),
             );
           }
-
+ 
           final competencias = snapshot.data!;
           _compIdSeleccionada ??= competencias.first.id;
-
+ 
           return Column(
             children: [
               if (competencias.length > 1)
@@ -63,13 +63,13 @@ class _PodioViewState extends State<PodioView> {
       ),
     );
   }
-
+ 
   Widget _selectorCompetencia(List<CompetitionModel> competencias) =>
       Container(
         padding: const EdgeInsets.all(16),
         color:   AppColors.oscuro2,
         child: DropdownButtonFormField<String>(
-          initialValue:         _compIdSeleccionada,
+          initialValue:  _compIdSeleccionada,
           dropdownColor: AppColors.oscuro2,
           style: const TextStyle(color: AppColors.blanco),
           decoration: InputDecoration(
@@ -89,7 +89,7 @@ class _PodioViewState extends State<PodioView> {
           onChanged: (v) => setState(() => _compIdSeleccionada = v),
         ),
       );
-
+ 
   // ── PODIO PRINCIPAL ──────────────────────────────
   Widget _podio(String compId) {
     return StreamBuilder<List<RaceTimeModel>>(
@@ -98,7 +98,7 @@ class _PodioViewState extends State<PodioView> {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const LoadingWidget(mensaje: 'Cargando podio...');
         }
-
+ 
         if (!snapshot.hasData || snapshot.data!.isEmpty) {
           return const Center(
             child: Column(
@@ -116,34 +116,84 @@ class _PodioViewState extends State<PodioView> {
             ),
           );
         }
-
-        final tiempos = snapshot.data!;
-
+ 
+        // ✅ FIX: Deduplicar por robotId — quedarse solo con el mejor
+        // tiempo de cada robot (el primero que aparece ya es el mejor
+        // porque el stream viene ordenado por finalTimeMs ASC).
+        final tiempos = _deduplicarPorRobot(snapshot.data!);
+ 
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            // Top 3 visual
-            if (tiempos.length >= 3)
-              _top3(tiempos),
-            if (tiempos.length >= 3)
+            // ✅ FIX: Top visual solo si hay robots suficientes
+            // — se adapta a 1, 2 o 3+ competidores
+            if (tiempos.isNotEmpty) ...[
+              _topVisual(tiempos),
               const SizedBox(height: 24),
-
-            // Lista completa
+            ],
+ 
+            // Clasificación completa
             const Text('Clasificación completa',
                 style: AppTextStyles.tituloSmall),
             const SizedBox(height: 12),
             ...tiempos.asMap().entries.map((entry) {
-              return _filaClasificacion(
-                  entry.key + 1, entry.value);
+              return _filaClasificacion(entry.key + 1, entry.value);
             }),
           ],
         );
       },
     );
   }
-
-  // ── TOP 3 VISUAL ─────────────────────────────────
-  Widget _top3(List<RaceTimeModel> tiempos) {
+ 
+  // ✅ FIX: Deduplica la lista — un registro por robotId con su mejor tiempo
+  List<RaceTimeModel> _deduplicarPorRobot(List<RaceTimeModel> tiempos) {
+    final seen    = <String>{};
+    final unicos  = <RaceTimeModel>[];
+    for (final t in tiempos) {
+      if (!seen.contains(t.robotId)) {
+        seen.add(t.robotId);
+        unicos.add(t);
+      }
+    }
+    return unicos;
+  }
+ 
+  // ✅ FIX: Top visual dinámico — se adapta a cuántos robots hay
+  Widget _topVisual(List<RaceTimeModel> tiempos) {
+    // Con 1 robot: solo muestra el ganador centrado
+    if (tiempos.length == 1) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color:        AppColors.oscuro2,
+          borderRadius: BorderRadius.circular(16),
+          border:       Border.all(color: Colors.white12),
+        ),
+        child: Center(child: _podioItem(tiempos[0], 1, 110)),
+      );
+    }
+ 
+    // Con 2 robots: muestra 1° y 2°
+    if (tiempos.length == 2) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color:        AppColors.oscuro2,
+          borderRadius: BorderRadius.circular(16),
+          border:       Border.all(color: Colors.white12),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            _podioItem(tiempos[0], 1, 110),
+            _podioItem(tiempos[1], 2, 80),
+          ],
+        ),
+      );
+    }
+ 
+    // Con 3+ robots: podio completo 1°, 2°, 3°
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -155,25 +205,22 @@ class _PodioViewState extends State<PodioView> {
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          // 2do lugar
-          _podioItem(tiempos[1], 2, 80),
-          // 1er lugar
-          _podioItem(tiempos[0], 1, 110),
-          // 3er lugar
-          _podioItem(tiempos[2], 3, 60),
+          _podioItem(tiempos[1], 2, 80),  // 2° izquierda
+          _podioItem(tiempos[0], 1, 110), // 1° centro
+          _podioItem(tiempos[2], 3, 60),  // 3° derecha
         ],
       ),
     );
   }
-
+ 
   Widget _podioItem(RaceTimeModel tiempo, int posicion, double altura) {
     final colores = {
-      1: const Color(0xFFFFD700), // Oro
-      2: const Color(0xFFC0C0C0), // Plata
-      3: const Color(0xFFCD7F32), // Bronce
+      1: const Color(0xFFFFD700),
+      2: const Color(0xFFC0C0C0),
+      3: const Color(0xFFCD7F32),
     };
     final color = colores[posicion]!;
-
+ 
     return FutureBuilder<RobotModel?>(
       future: RobotService().getRobot(tiempo.robotId),
       builder: (context, snapshot) {
@@ -188,17 +235,14 @@ class _PodioViewState extends State<PodioView> {
                 fontSize:   12,
                 fontWeight: FontWeight.bold,
               ),
-              textAlign:  TextAlign.center,
-              maxLines:   2,
-              overflow:   TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              maxLines:  2,
+              overflow:  TextOverflow.ellipsis,
             ),
             const SizedBox(height: 4),
             Text(
               tiempo.tiempoFormateado,
-              style: TextStyle(
-                color:    color,
-                fontSize: 11,
-              ),
+              style: TextStyle(color: color, fontSize: 11),
             ),
             const SizedBox(height: 8),
             Container(
@@ -226,29 +270,29 @@ class _PodioViewState extends State<PodioView> {
       },
     );
   }
-
+ 
   // ── FILA CLASIFICACIÓN ───────────────────────────
   Widget _filaClasificacion(int posicion, RaceTimeModel tiempo) {
     Color posColor;
     if (posicion == 1) {
-  posColor = const Color(0xFFFFD700);
-} else if (posicion == 2) {
-  posColor = const Color(0xFFC0C0C0);
-} else if (posicion == 3) {
-  posColor = const Color(0xFFCD7F32);
-} else {
-  posColor = Colors.white38;
-}
-
+      posColor = const Color(0xFFFFD700);
+    } else if (posicion == 2) {
+      posColor = const Color(0xFFC0C0C0);
+    } else if (posicion == 3) {
+      posColor = const Color(0xFFCD7F32);
+    } else {
+      posColor = Colors.white38;
+    }
+ 
     return FutureBuilder<RobotModel?>(
       future: RobotService().getRobot(tiempo.robotId),
       builder: (context, snapshot) {
         final robot = snapshot.data;
         return Container(
-          margin: const EdgeInsets.only(bottom: 8),
+          margin:  const EdgeInsets.only(bottom: 8),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: AppColors.oscuro2,
+            color:        AppColors.oscuro2,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
               color: posicion <= 3 ? posColor : Colors.white12,
@@ -275,25 +319,21 @@ class _PodioViewState extends State<PodioView> {
                 ),
               ),
               const SizedBox(width: 12),
-
+ 
               // Info robot
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      robot?.name ?? '...',
-                      style: AppTextStyles.cardTitulo,
-                    ),
-                    Text(
-                      robot?.category ?? '',
-                      style: AppTextStyles.cardSubtitulo,
-                    ),
+                    Text(robot?.name ?? '...',
+                        style: AppTextStyles.cardTitulo),
+                    Text(robot?.category ?? '',
+                        style: AppTextStyles.cardSubtitulo),
                   ],
                 ),
               ),
-
-              // Tiempo
+ 
+              // Tiempo + ronda
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
@@ -306,7 +346,7 @@ class _PodioViewState extends State<PodioView> {
                     ),
                   ),
                   Text(
-                    'Ronda ${tiempo.round}',
+                    'Mejor tiempo',  // ✅ FIX: era "Ronda X", ahora más claro
                     style: AppTextStyles.cardSubtitulo,
                   ),
                 ],
@@ -318,3 +358,4 @@ class _PodioViewState extends State<PodioView> {
     );
   }
 }
+ 
