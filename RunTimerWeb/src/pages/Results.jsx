@@ -23,6 +23,7 @@ function Results() {
       return;
     }
 
+    // CONSULTA FILTRADA POR USUARIO ACTIVO Y ORDENADA POR FECHA MAS RECIENTE
     const q = query(
       collection(db, "resultados"),
       where("userId", "==", user.uid),
@@ -37,15 +38,24 @@ function Results() {
       snapshot.forEach((doc) => {
         const data = doc.data();
 
+        // Formatear fecha de Firebase Timestamp a String legible
         const formattedDate = data.date?.seconds 
           ? new Date(data.date.seconds * 1000).toLocaleDateString()
-          : data.date;
+          : String(data.date || "Sin fecha");
 
         fetchedResults.push({ id: doc.id, ...data, date: formattedDate });
 
+        // Procesar Tiempo de forma segura (por si viene como string)
         const numTime = parseFloat(data.time);
-        if (numTime < best) best = numTime;
-        if (data.position === "1°" || data.position === 1) wins++;
+        if (!isNaN(numTime) && numTime < best) {
+          best = numTime;
+        }
+
+        // Procesar Posición (Limpia letras o caracteres como '°')
+        const rawPosition = String(data.position || "").replace("°", "").trim();
+        if (rawPosition === "1") {
+          wins++;
+        }
       });
 
       setResults(fetchedResults);
@@ -57,20 +67,30 @@ function Results() {
           totalCompetitions: fetchedResults.length,
           victories: wins,
         });
+      } else {
+        // Reset de métricas si el usuario no tiene registros
+        setMetrics({ bestTime: "--", lastTime: "--", totalCompetitions: 0, victories: 0 });
       }
+      setLoading(false);
+    }, (error) => {
+      console.error("Error al conectar con la colección resultados:", error);
       setLoading(false);
     });
 
     return () => unsubscribe();
   }, [navigate]);
-/*
+
+  // Pantalla de carga activa mientras responde Firestore
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-black text-gray-900 dark:text-white flex items-center justify-center transition-colors duration-300">
-        <p className="text-xl text-gray-400 dark:text-gray-500 animate-pulse">Cargando telemetría...</p>
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-red-500 border-t-transparent rounded-full animate-spin" />
+          <p className="text-xl text-gray-400 dark:text-zinc-500 animate-pulse font-medium">Cargando telemetría...</p>
+        </div>
       </div>
     );
-  }*/
+  }
 
   const latestRace = results[0] || null;
 
@@ -97,10 +117,8 @@ function Results() {
         <p className="text-gray-500 dark:text-gray-400 text-lg">Historial personal y rendimiento competitivo.</p>
       </div>
 
-      {/* Grid de Tarjetas de Métricas Reales */}
+      {/* Grid de Tarjetas de Métricas */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-10">
-        
-        {/* Mejor tiempo */}
         <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-3xl p-6 shadow-sm transition-colors duration-300">
           <div className="flex justify-between items-center mb-5">
             <div className="w-14 h-14 rounded-2xl bg-red-500/10 text-red-500 flex items-center justify-center">
@@ -112,7 +130,6 @@ function Results() {
           <p className="text-4xl font-bold text-gray-900 dark:text-white">{metrics.bestTime}</p>
         </div>
 
-        {/* Último tiempo */}
         <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-3xl p-6 shadow-sm transition-colors duration-300">
           <div className="flex justify-between items-center mb-5">
             <div className="w-14 h-14 rounded-2xl bg-red-500/10 text-red-500 flex items-center justify-center">
@@ -124,7 +141,6 @@ function Results() {
           <p className="text-4xl font-bold text-gray-900 dark:text-white">{metrics.lastTime}</p>
         </div>
 
-        {/* Competencias */}
         <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-3xl p-6 shadow-sm transition-colors duration-300">
           <div className="flex justify-between items-center mb-5">
             <div className="w-14 h-14 rounded-2xl bg-red-500/10 text-red-500 flex items-center justify-center">
@@ -136,7 +152,6 @@ function Results() {
           <p className="text-4xl font-bold text-gray-900 dark:text-white">{metrics.totalCompetitions}</p>
         </div>
 
-        {/* Victorias */}
         <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-3xl p-6 shadow-sm transition-colors duration-300">
           <div className="flex justify-between items-center mb-5">
             <div className="w-14 h-14 rounded-2xl bg-red-500/10 text-red-500 flex items-center justify-center">
@@ -155,7 +170,7 @@ function Results() {
           <div className="flex items-center justify-between mb-6">
             <div>
               <h2 className="text-2xl font-bold mb-2 text-gray-900 dark:text-white">Última competencia</h2>
-              <p className="text-gray-500 dark:text-gray-400">{latestRace.competition}</p>
+              <p className="text-gray-500 dark:text-gray-400 text-lg font-medium">{latestRace.competition}</p>
             </div>
             <div className="bg-green-500/10 text-green-600 dark:text-green-400 px-4 py-2 rounded-xl text-sm font-semibold uppercase tracking-wide">
               {latestRace.status || "Finalizado"}
@@ -169,7 +184,9 @@ function Results() {
             </div>
             <div className="bg-gray-50 dark:bg-black border border-gray-200 dark:border-zinc-800 rounded-2xl p-5 transition-colors duration-300">
               <p className="text-gray-500 dark:text-gray-400 mb-2 text-sm font-medium">Posición</p>
-              <h2 className="text-3xl font-bold text-gray-900 dark:text-white">#{latestRace.position}</h2>
+              <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
+                {String(latestRace.position).includes('°') ? latestRace.position : `#${latestRace.position}`}
+              </h2>
             </div>
             <div className="bg-gray-50 dark:bg-black border border-gray-200 dark:border-zinc-800 rounded-2xl p-5 transition-colors duration-300">
               <p className="text-gray-500 dark:text-gray-400 mb-2 text-sm font-medium">Categoría</p>
@@ -206,7 +223,9 @@ function Results() {
                     <td className="py-5 font-semibold">{result.competition}</td>
                     <td className="py-5 text-gray-500 dark:text-gray-400">{result.date}</td>
                     <td className="py-5 font-bold text-green-600 dark:text-green-400">{result.time}s</td>
-                    <td className="py-5 font-medium">{result.position}°</td>
+                    <td className="py-5 font-medium">
+                      {String(result.position).includes('°') ? result.position : `${result.position}°`}
+                    </td>
                     <td className="py-5">
                       <span className="bg-green-500/10 text-green-600 dark:text-green-400 px-3.5 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider">
                         {result.status || "Finalizado"}
