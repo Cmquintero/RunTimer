@@ -1,19 +1,8 @@
-import React, {
-  useEffect,
-  lazy,
-  Suspense,
-} from "react";
+import React, { useEffect, lazy, Suspense } from "react";
 
-import {
-  Route,
-  Routes,
-  useLocation,
-  Navigate,
-} from "react-router-dom";
+import { Route, Routes, useLocation, Navigate } from "react-router-dom";
 
-import {
-  AnimatePresence,
-} from "framer-motion";
+import { AnimatePresence } from "framer-motion";
 
 import Competitions from "./pages/Competitions";
 import Dashboard from "./pages/Dashboard";
@@ -29,57 +18,31 @@ import Races from "./pages/Races";
 import CompetitionDetail from "./pages/CompetitionDetail";
 import ContactoCreadores from "./pages/ContactoCreadores";
 
-const Podium = lazy(() =>
-  import("./pages/Podium")
-);
+const Podium = lazy(() => import("./pages/Podium"));
 
 function AnimatedRoutes() {
   const location = useLocation();
 
   return (
     <AnimatePresence mode="wait">
-      <Routes
-        location={location}
-        key={location.pathname}
-      >
+      <Routes location={location} key={location.pathname}>
         {/* ───────────────────────── */}
         {/* RUTAS PÚBLICAS */}
         {/* ───────────────────────── */}
-
-        <Route
-          path="/login"
-          element={<Login />}
-        />
-
-        <Route
-          path="/register"
-          element={<Register />}
-        />
-
-        <Route
-          path="/ContactoCreadores"
-          element={
-            <ContactoCreadores />
-          }
-        />
-
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
         {/* Redirect root */}
         <Route
           path="/"
           element={
             <ProtectedRoute>
-              <Navigate
-                to="/dashboard"
-                replace
-              />
+              <Navigate to="/dashboard" replace />
             </ProtectedRoute>
           }
         />
-
         {/* ───────────────────────── */}
         {/* PODIUM (LAZY LOAD) */}
         {/* ───────────────────────── */}
-
         <Route
           path="/podium"
           element={
@@ -96,11 +59,18 @@ function AnimatedRoutes() {
             </ProtectedRoute>
           }
         />
-
         {/* ───────────────────────── */}
         {/* PRIVADAS */}
         {/* ───────────────────────── */}
-
+        // En tu archivo donde tienes las rutas (App.jsx o el archivo de rutas)
+        <Route
+          path="/contacto-creadores"
+          element={
+            <ProtectedRoute>
+              <ContactoCreadores />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/dashboard"
           element={
@@ -109,7 +79,6 @@ function AnimatedRoutes() {
             </ProtectedRoute>
           }
         />
-
         {/* Lista de competencias */}
         <Route
           path="/competitions"
@@ -119,7 +88,6 @@ function AnimatedRoutes() {
             </ProtectedRoute>
           }
         />
-
         {/* Detalle individual */}
         <Route
           path="/competitions/:id"
@@ -129,7 +97,6 @@ function AnimatedRoutes() {
             </ProtectedRoute>
           }
         />
-
         <Route
           path="/results"
           element={
@@ -138,7 +105,6 @@ function AnimatedRoutes() {
             </ProtectedRoute>
           }
         />
-
         <Route
           path="/settings"
           element={
@@ -147,7 +113,6 @@ function AnimatedRoutes() {
             </ProtectedRoute>
           }
         />
-
         <Route
           path="/profile"
           element={
@@ -156,7 +121,6 @@ function AnimatedRoutes() {
             </ProtectedRoute>
           }
         />
-
         <Route
           path="/participantProfile"
           element={
@@ -165,7 +129,6 @@ function AnimatedRoutes() {
             </ProtectedRoute>
           }
         />
-
         <Route
           path="/editProfile"
           element={
@@ -174,17 +137,8 @@ function AnimatedRoutes() {
             </ProtectedRoute>
           }
         />
-
         {/* Ruta fallback */}
-        <Route
-          path="*"
-          element={
-            <Navigate
-              to="/"
-              replace
-            />
-          }
-        />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AnimatePresence>
   );
@@ -192,49 +146,28 @@ function AnimatedRoutes() {
 
 function App() {
   useEffect(() => {
-    const applyTheme = (
-      theme
-    ) => {
+    const applyTheme = (theme) => {
       if (theme === "dark") {
-        document.documentElement.classList.add(
-          "dark"
-        );
+        document.documentElement.classList.add("dark");
       } else {
-        document.documentElement.classList.remove(
-          "dark"
-        );
+        document.documentElement.classList.remove("dark");
       }
     };
 
-    const savedTheme =
-      localStorage.getItem(
-        "theme"
-      ) || "dark";
+    const savedTheme = localStorage.getItem("theme") || "dark";
 
     applyTheme(savedTheme);
 
-    const handleStorage =
-      (e) => {
-        if (
-          e.key === "theme"
-        ) {
-          applyTheme(
-            e.newValue ||
-              "light"
-          );
-        }
-      };
+    const handleStorage = (e) => {
+      if (e.key === "theme") {
+        applyTheme(e.newValue || "light");
+      }
+    };
 
-    window.addEventListener(
-      "storage",
-      handleStorage
-    );
+    window.addEventListener("storage", handleStorage);
 
     return () => {
-      window.removeEventListener(
-        "storage",
-        handleStorage
-      );
+      window.removeEventListener("storage", handleStorage);
     };
   }, []);
 
