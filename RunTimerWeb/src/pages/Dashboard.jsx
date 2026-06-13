@@ -26,6 +26,7 @@ function Dashboard() {
   const navigate = useNavigate();
   const [isAnimating, setAnimating] = useState(false);
   const [competitions, setCompetitions] = useState([]);
+  const [usersCount, setUsersCount] = useState(0); // 👥 NUEVO ESTADO PARA EL CONTEO
   const [showNotifications, setShowNotifications] = useState(false);
   const { currentUser, userData } = useAuth();
   const [notifications, setNotifications] = useState([]);
@@ -42,14 +43,12 @@ function Dashboard() {
     const generateNotifications = (compData) => {
       const newNotifications = [];
 
-      // 👉 NOTIFICACIÓN DEL DÍA
       newNotifications.push({
         id: "today",
         title: "Hoy no faltes!",
         message: "Sistema activo - revisa tus carreras del día",
       });
 
-      // 👉 COMPETENCIAS
       compData.forEach((c) => {
         const fecha = c.date?.toDate?.() || (c.date ? new Date(c.date) : null);
         const fechaTexto = fecha ? fecha.toLocaleDateString() : "sin fecha";
@@ -64,17 +63,17 @@ function Dashboard() {
       setNotifications(newNotifications);
     };
 
-    const q = query(collection(db, "competitions"));
-
+    // 🏆 LISTENER DE COMPETENCIAS
+    const qComp = query(collection(db, "competitions"));
     const unsubscribeFirestore = onSnapshot(
-      q,
+      qComp,
       (snapshot) => {
         const data = [];
         snapshot.forEach((doc) => {
           data.push({ id: doc.id, ...doc.data() });
         });
         setCompetitions(data);
-        generateNotifications(data); // Generar notificaciones al recibir datos
+        generateNotifications(data);
         console.log("Competitions actualizadas en tiempo real:", data);
       },
       (error) => {
@@ -82,8 +81,22 @@ function Dashboard() {
       }
     );
 
-    const esp32Ref = ref(database, "hardware/esp32");
+    // 👥 LISTENER DE USUARIOS REGISTRADOS EN TIEMPO REAL
+    const qUsers = query(collection(db, "users"));
+    const unsubscribeUsers = onSnapshot(
+      qUsers,
+      (snapshot) => {
+        // snapshot.size nos devuelve la cantidad exacta de documentos en la colección
+        setUsersCount(snapshot.size); 
+        console.log("Total de usuarios actualizado:", snapshot.size);
+      },
+      (error) => {
+        console.error("Error cargando usuarios realtime:", error);
+      }
+    );
 
+    // 🤖 LISTENER RTDB ESP32
+    const esp32Ref = ref(database, "hardware/esp32");
     const unsubscribeRTDB = onValue(
       esp32Ref,
       (snapshot) => {
@@ -91,9 +104,7 @@ function Dashboard() {
         if (value) {
           setEsp32Data({
             online: value.online ?? false,
-            mejorTiempo: value.mejor_tiempo
-              ? `${value.mejor_tiempo}s`
-              : "0.00s",
+            mejorTiempo: value.mejor_tiempo ? `${value.mejor_tiempo}s` : "0.00s",
             sensoresActivos: value.sensores_count ?? "0",
             participantes: value.participantes_count ?? "0",
           });
@@ -104,8 +115,10 @@ function Dashboard() {
       }
     );
 
+    // LIMPIEZA DE TODOS LOS LISTENERS
     return () => {
       unsubscribeFirestore();
+      unsubscribeUsers(); // Desvincular usuarios
       unsubscribeRTDB();
     };
   }, []);
@@ -246,10 +259,11 @@ function Dashboard() {
         </div>
 
         {/* STATS */}
-     {/* STATS */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
           <Card icon={<Trophy />} title="Competencias Activas" value={competitions.length} isOnline={true} />
-          <Card icon={<Users />} title="Usuarios Registrados" value="124" isOnline={true} />
+          
+          {/* VINCULAMOS LA VARIABLE DE ESTADO REAL ASIGNADA DESDE FIRESTORE */}
+          <Card icon={<Users />} title="Usuarios Registrados" value={usersCount} isOnline={true} />
           
           {/* Tarjeta de Contacto */}
           <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-3xl p-6 shadow-sm flex flex-col justify-between">
